@@ -1,0 +1,242 @@
+#!/usr/bin/env python3
+"""
+DLSS/NVAPI environment setup wrapper for Proton games
+
+Detects DLSS files and configures appropriate environment variables,
+then launches the game with gamemoderun.
+
+Usage in Steam launch options:
+    proton-env-setup %command%
+"""
+
+import os
+import sys
+import glob
+import urllib.request
+import re
+
+
+def get_game_dir():
+    """Get the game installation directory from environment."""
+    return os.environ.get("STEAM_COMPAT_INSTALL_PATH", "")
+
+
+def get_prefix_dir():
+    """Get the Proton prefix directory (pfx subfolder)."""
+    compat_data = os.environ.get("STEAM_COMPAT_DATA_PATH", "")
+    if compat_data:
+        return os.path.join(compat_data, "pfx")
+    return ""
+
+
+def find_files_matching(directory, pattern):
+    """Find files matching a glob pattern in directory and subdirectories."""
+    if not directory or not os.path.isdir(directory):
+        return []
+
+    search_path = os.path.join(directory, "**", pattern)
+    return glob.glob(search_path, recursive=True)
+
+
+def has_nvngx_dlss_dll():
+    """Check if nvngx_dlss*.dll files exist in game folder or prefix."""
+    game_dir = get_game_dir()
+    prefix_dir = get_prefix_dir()
+
+    # Check game directory
+    if game_dir:
+        dll_files = find_files_matching(game_dir, "nvngx_dlss*.dll")
+        if dll_files:
+            return True
+
+    # Check prefix directory
+    if prefix_dir:
+        dll_files = find_files_matching(prefix_dir, "nvngx_dlss*.dll")
+        if dll_files:
+            return True
+
+    return False
+
+
+def has_libnvidia_ngx_dlss_so():
+    """Check if libnvidia-ngx-dlss*.so* files exist in game folder."""
+    game_dir = get_game_dir()
+    if not game_dir:
+        return False
+
+    so_files = find_files_matching(game_dir, "libnvidia-ngx-dlss*.so*")
+    return len(so_files) > 0
+
+
+def get_github_dlss_versions():
+    """Fetch available DLSS library versions from NVIDIA GitHub."""
+    github_api_url = "https://api.github.com/repos/NVIDIA/DLSS/contents/lib/Linux_x86_64/rel"
+
+    try:
+        with urllib.request.urlopen(github_api_url, timeout=10) as response:
+            if response.status != 200:
+                return []
+
+            import json
+            data = json.loads(response.read().decode('utf-8'))
+
+            # Extract .so files
+            so_files = []
+            for item in data:
+                if item['type'] == 'file' and item['name'].startswith('libnvidia-ngx-dlss.so.'):
+                    so_files.append({
+                        'name': item['name'],
+                        'download_url': item['download_url']
+                    })
+
+            return so_files
+    except Exception as e:
+        print(f"Warning: Could not fetch DLSS versions from GitHub: {e}", file=sys.stderr)
+        return []
+
+
+def download_dlss_library(url, dest_path):
+    """Download a DLSS library file to the destination path."""
+    filename = os.path.basename(dest_path)
+    try:
+        urllib.request.urlretrieve(url, dest_path)
+        # Make executable
+        os.chmod(dest_path, 0o755)
+        file_size_mb = os.path.getsize(dest_path) / (1024 * 1024)
+        print(f"Downloaded {filename} ({file_size_mb:.1f} MB)", file=sys.stderr)
+        return True
+    except Exception as e:
+        print(f"Error downloading {filename}: {e}", file=sys.stderr)
+        return False
+
+
+def get_installed_dlss_versions(game_dir):
+    """Get list of installed DLSS .so versions in game directory."""
+    so_files = find_files_matching(game_dir, "libnvidia-ngx-dlss.so.*")
+
+    # Extract version numbers
+    versions = {}
+    for filepath in so_files:
+        filename = os.path.basename(filepath)
+        # Parse version from filename like libnvidia-ngx-dlss.so.3.7.20
+        match = re.search(r'libnvidia-ngx-dlss\.so\.(\d+\.\d+\.\d+)', filename)
+        if match:
+            version = match.group(1)
+            versions[version] = filepath
+
+    return versions
+
+
+def update_dlss_libraries():
+    """Download latest DLSS libraries from NVIDIA GitHub if not present."""
+    game_dir = get_game_dir()
+    if not game_dir:
+        return
+
+    # Find the directory containing existing DLSS .so files
+    existing_files = find_files_matching(game_dir, "libnvidia-ngx-dlss*.so*")
+    if not existing_files:
+        return
+
+    # Use the directory of the first found file
+    dlss_dir = os.path.dirname(existing_files[0])
+
+    # Get currently installed versions
+    installed_versions = get_installed_dlss_versions(game_dir)
+
+    # Always print installed versions
+    for version in sorted(installed_versions.keys()):
+        filepath = installed_versions[version]
+        file_size_mb = os.path.getsize(filepath) / (1024 * 1024)
+        print(f"Found {os.path.basename(filepath)} ({file_size_mb:.1f} MB)", file=sys.stderr)
+
+    # Get available versions from GitHub
+    github_files = get_github_dlss_versions()
+
+    if not github_files:
+        return
+
+    # Download any versions not already installed
+    for file_info in github_files:
+        match = re.search(r'libnvidia-ngx-dlss\.so\.(\d+\.\d+\.\d+)', file_info['name'])
+        if match:
+            version = match.group(1)
+            if version not in installed_versions:
+                dest_path = os.path.join(dlss_dir, file_info['name'])
+                download_dlss_library(file_info['download_url'], dest_path)
+
+
+def setup_environment():
+    """
+    Configure environment variables based on DLSS/NVAPI detection.
+    Returns dict of environment variables to set.
+    """
+    env_vars = {}
+
+    # 1. Always enable DXVK NVAPI Reflex
+    env_vars["DXVK_NVAPI_VKREFLEX"] = "1"
+
+    # 2. Check for nvngx_dlss*.dll files
+    has_dll = has_nvngx_dlss_dll()
+
+    # 3. Check for libnvidia-ngx-dlss*.so* files
+    has_so = has_libnvidia_ngx_dlss_so()
+
+    if has_dll:
+        # Enable NGX DLSS overrides for Windows DLSS DLLs
+        env_vars["PROTON_ENABLE_NGX_UPDATER"] = "1"
+        env_vars["DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE"] = "on"
+        env_vars["DXVK_NVAPI_DRS_NGX_DLSS_RR_OVERRIDE"] = "on"
+        env_vars["DXVK_NVAPI_DRS_NGX_DLSS_FG_OVERRIDE"] = "on"
+        env_vars["DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE_RENDER_PRESET_SELECTION"] = "render_preset_latest"
+        env_vars["DXVK_NVAPI_DRS_NGX_DLSS_RR_OVERRIDE_RENDER_PRESET_SELECTION"] = "render_preset_latest"
+
+    if has_so:
+        # Update DLSS libraries from GitHub
+        update_dlss_libraries()
+
+    # 4. If no DLSS files found, enable smooth motion
+    if not has_dll and not has_so:
+        env_vars["NVPRESENT_ENABLE_SMOOTH_MOTION"] = "1"
+
+    return env_vars
+
+
+def main():
+    """Main entry point."""
+    if len(sys.argv) < 2:
+        print("Usage: proton-env-setup <command> [args...]", file=sys.stderr)
+        print("", file=sys.stderr)
+        print("Example in Steam launch options:", file=sys.stderr)
+        print("    proton-env-setup %command%", file=sys.stderr)
+        sys.exit(1)
+
+    # Setup environment variables
+    env_vars = setup_environment()
+
+    # Apply environment variables to current process
+    for key, value in env_vars.items():
+        os.environ[key] = value
+        print(f"Set {key}={value}", file=sys.stderr)
+
+    # Prepare command: gamemoderun + original command
+    command = ["gamemoderun"] + sys.argv[1:]
+
+    print(f"Launching: {' '.join(command)}", file=sys.stderr)
+    print("", file=sys.stderr)
+
+    # Execute command, replacing current process
+    # This ensures proper signal handling and process management
+    try:
+        os.execvp(command[0], command)
+    except FileNotFoundError:
+        print(f"Error: '{command[0]}' not found in PATH", file=sys.stderr)
+        print("Install gamemode package or remove 'gamemoderun' wrapper", file=sys.stderr)
+        sys.exit(1)
+    except Exception as e:
+        print(f"Error executing command: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+if __name__ == "__main__":
+    main()
