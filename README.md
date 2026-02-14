@@ -42,7 +42,7 @@ user_settings["DXVK_HUD"] = "devinfo,fps"
 user_settings["DXVK_NVAPI_LOG_LEVEL"] = "info"
 ```
 
-## Custom launcher for ALL games at once
+## Custom launcher for ALL games
 
 The `proton-env-setup` file is a script to be passed to **any** game in Steam, to set some logic based on the type of game installed. It works roughly as the auto configuration for Proton, but it supports also native Linux games.
 
@@ -125,4 +125,33 @@ Set NVPRESENT_ENABLE_SMOOTH_MOTION=1
 Launching: gamemoderun uname
 
 Linux
+```
+
+## Adjust all launch options for all games at once
+
+The `proton-launch-editor` file is a script to be executed standa alone that will parse your `~/.local/share/Steam/userdata/<steamid>/config/localconfig.vdf` and change the `LaunchOptions` parameter of **all** the games that user has in Steam.
+
+Put the script in your `$PATH` (`.local/bin`, `/usr/local/bin`, etc.) so your shell can find it and adjust the following variables at the top of the script pointing to your Steam User ID and your preferred launch options:
+
+```
+STEAM_USER_ID = "XXXXXXXXX"
+LAUNCH_OPTION = "proton-env-setup %command%"
+```
+
+I use it in combination with the above script. Sample output:
+
+```
+$ proton-launch-editor
+Processing: Baldur's Gate 3 (ID: 1086940)
+Processing: Cyberpunk 2077 (ID: 1091500)
+Processing: Mass Effect™ Legendary Edition (ID: 1328670)
+Processing: DEATH STRANDING DIRECTOR'S CUT (ID: 1850570)
+Processing: Horizon Forbidden West™ Complete Edition (ID: 2420110)
+Processing: The Talos Principle (ID: 257510)
+Processing: DOOM (ID: 379720)
+Processing: Syberia (ID: 46500)
+Processing: DOOM Eternal (ID: 782330)
+
+Successfully updated 9 game(s)
+Backup saved to: /home/slaanesh/.local/share/Steam/userdata/XXXXXXXXX/config/localconfig.vdf.backup
 ```

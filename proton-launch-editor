@@ -1,0 +1,184 @@
+#!/usr/bin/env python3
+"""
+Script to set LaunchOptions for Steam games to use proton-env-setup
+"""
+
+import os
+import re
+import sys
+from pathlib import Path
+
+# Configuration
+STEAM_USER_ID = "XXXXXXXXX"
+LAUNCH_OPTION = "proton-env-setup %command%"
+
+# Paths
+STEAMAPPS_DIR = Path("~/.local/share/Steam/steamapps").expanduser()
+LOCALCONFIG_PATH = Path(f"~/.local/share/Steam/userdata/{STEAM_USER_ID}/config/localconfig.vdf").expanduser()
+
+def parse_acf(file_path):
+    """Parse an ACF file and extract appid and name"""
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        appid_match = re.search(r'"appid"\s+"(\d+)"', content)
+        name_match = re.search(r'"name"\s+"([^"]+)"', content)
+
+        if appid_match and name_match:
+            return {
+                'appid': appid_match.group(1),
+                'name': name_match.group(1)
+            }
+    except Exception as e:
+        print(f"Error parsing {file_path}: {e}", file=sys.stderr)
+
+    return None
+
+def should_skip(name):
+    """Check if the game name should be skipped"""
+    name_lower = name.lower()
+    return name_lower.startswith('steam') or name_lower.startswith('proton')
+
+def read_vdf_file(file_path):
+    """Read the VDF file"""
+    with open(file_path, 'r', encoding='utf-8') as f:
+        return f.read()
+
+def write_vdf_file(file_path, content):
+    """Write the VDF file"""
+    # Create backup
+    backup_path = str(file_path) + '.backup'
+    if os.path.exists(file_path):
+        import shutil
+        shutil.copy2(file_path, backup_path)
+
+    with open(file_path, 'w', encoding='utf-8') as f:
+        f.write(content)
+
+def find_app_section_bounds(vdf_content, start_pos):
+    """Find the closing brace for an app section starting at start_pos
+
+    start_pos should be right after the opening brace of the app section,
+    so we start with brace_count=1 to account for that already-matched brace.
+    """
+    brace_count = 1  # Start at 1 because the opening brace was already matched
+
+    for i in range(start_pos, len(vdf_content)):
+        if vdf_content[i] == '{':
+            brace_count += 1
+        elif vdf_content[i] == '}':
+            brace_count -= 1
+            if brace_count == 0:
+                return i
+
+    return -1
+
+def update_launch_options(vdf_content, appid, launch_option):
+    """
+    Update or add LaunchOptions for a specific appid in the VDF content
+    """
+    # Pattern to find the app section - match "appid" followed by opening brace
+    # We need to be at the right level in the apps section
+    app_pattern = rf'(\t+)"{appid}"\s*\n\s*{{'
+
+    match = re.search(app_pattern, vdf_content)
+    if not match:
+        # App section doesn't exist, create it in the apps section
+        apps_pattern = r'(\t+)"apps"\s*\n\s*{'
+        apps_match = re.search(apps_pattern, vdf_content)
+
+        if apps_match:
+            base_indent = apps_match.group(1)
+            app_indent = base_indent + '\t'
+            content_indent = app_indent + '\t'
+
+            # Insert new app section after the opening brace
+            insert_pos = apps_match.end()
+            new_app_section = f'\n{app_indent}"{appid}"\n{app_indent}{{\n{content_indent}"LaunchOptions"\t\t"{launch_option}"\n{app_indent}}}'
+            vdf_content = vdf_content[:insert_pos] + new_app_section + vdf_content[insert_pos:]
+            return vdf_content
+        else:
+            print(f"Warning: Could not find apps section for appid {appid}", file=sys.stderr)
+            return vdf_content
+
+    # App section exists
+    base_indent = match.group(1)
+    content_indent = base_indent + '\t'
+    start_pos = match.start()
+
+    # Find the closing brace for this app section
+    section_start = match.end()
+    end_pos = find_app_section_bounds(vdf_content, section_start)
+
+    if end_pos == -1:
+        print(f"Warning: Could not find end of app section for appid {appid}", file=sys.stderr)
+        return vdf_content
+
+    # Extract the app section content (between the braces)
+    app_section = vdf_content[start_pos:end_pos + 1]
+
+    # Remove all existing LaunchOptions lines using regex
+    # This removes any line containing "LaunchOptions" with any value
+    # Use [\s\t]* to match any whitespace including tabs
+    app_section_no_launch = re.sub(r'[ \t]*"LaunchOptions"[ \t]+"[^"]*"[ \t]*\n', '', app_section)
+
+    # Now add the LaunchOptions at the beginning of the section
+    # Find the position right after the opening brace
+    lines = app_section_no_launch.split('\n')
+
+    # Insert LaunchOptions after the opening brace (which should be line 1)
+    new_line = f'{content_indent}"LaunchOptions"\t\t"{launch_option}"'
+    lines.insert(2, new_line)  # Insert after appid line and opening brace
+
+    new_app_section = '\n'.join(lines)
+
+    # Replace in the full content
+    vdf_content = vdf_content[:start_pos] + new_app_section + vdf_content[end_pos + 1:]
+
+    return vdf_content
+
+def main():
+    # Get all appmanifest files
+    manifest_files = sorted(STEAMAPPS_DIR.glob("appmanifest_*.acf"))
+
+    if not manifest_files:
+        print("No appmanifest files found!", file=sys.stderr)
+        return 1
+
+    # Parse all manifests and filter
+    games_to_update = []
+
+    for manifest_file in manifest_files:
+        game_info = parse_acf(manifest_file)
+        if game_info:
+            if should_skip(game_info['name']):
+                continue
+            games_to_update.append(game_info)
+
+    if not games_to_update:
+        print("No games to update (all excluded)")
+        return 0
+
+    # Read the localconfig.vdf file
+    if not LOCALCONFIG_PATH.exists():
+        print(f"Error: {LOCALCONFIG_PATH} not found!", file=sys.stderr)
+        return 1
+
+    vdf_content = read_vdf_file(LOCALCONFIG_PATH)
+
+    # Update each game
+    for game in games_to_update:
+        print(f"Processing: {game['name']} (ID: {game['appid']})")
+        vdf_content = update_launch_options(vdf_content, game['appid'], LAUNCH_OPTION)
+
+    # Write back the modified content
+    write_vdf_file(LOCALCONFIG_PATH, vdf_content)
+
+    print(f"\nSuccessfully updated {len(games_to_update)} game(s)")
+    print(f"Backup saved to: {LOCALCONFIG_PATH}.backup")
+
+    return 0
+
+if __name__ == "__main__":
+    sys.exit(main())
