@@ -28,6 +28,7 @@ If found, enables NGX (DLSS) updates and applies the latest preset with override
 - `DXVK_NVAPI_DRS_NGX_DLSS_FG_OVERRIDE=on` (Frame Generation)
 - `DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE_RENDER_PRESET_SELECTION=render_preset_latest`
 - `DXVK_NVAPI_DRS_NGX_DLSS_RR_OVERRIDE_RENDER_PRESET_SELECTION=render_preset_latest`
+- `DXVK_NVAPI_DRS_NGX_DLSS_FG_OVERRIDE_RENDER_PRESET_SELECTION=render_preset_latest`
 
 If no DLSS are found (this means the game does not support DLSS), then exports:
 
@@ -73,6 +74,7 @@ If Windows DLLs are found, enables NGX (DLSS) updates and applies the latest pre
 - `DXVK_NVAPI_DRS_NGX_DLSS_FG_OVERRIDE=on` (Frame Generation)
 - `DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE_RENDER_PRESET_SELECTION=render_preset_latest`
 - `DXVK_NVAPI_DRS_NGX_DLSS_RR_OVERRIDE_RENDER_PRESET_SELECTION=render_preset_latest`
+- `DXVK_NVAPI_DRS_NGX_DLSS_FG_OVERRIDE_RENDER_PRESET_SELECTION=render_preset_latest`
 
 If native Linux shared objects are found, it downloads the latest DLSS libraries from the [NVIDIA DLSS Github repository](https://github.com/NVIDIA/DLSS/tree/main/lib/Linux_x86_64/rel) and places them along the game provided ones. For example:
 

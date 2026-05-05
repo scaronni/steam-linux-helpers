@@ -76,6 +76,7 @@ def get_settings():
         settings["DXVK_NVAPI_DRS_NGX_DLSS_FG_OVERRIDE"] = "on"
         settings["DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE_RENDER_PRESET_SELECTION"] = "render_preset_latest"
         settings["DXVK_NVAPI_DRS_NGX_DLSS_RR_OVERRIDE_RENDER_PRESET_SELECTION"] = "render_preset_latest"
+        settings["DXVK_NVAPI_DRS_NGX_DLSS_FG_OVERRIDE_RENDER_PRESET_SELECTION"] = "render_preset_latest"
     else:
         # If no DLSS DLLs found, enable smooth motion
         settings["NVPRESENT_ENABLE_SMOOTH_MOTION"] = "1"

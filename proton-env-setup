@@ -190,6 +190,7 @@ def setup_environment():
         env_vars["DXVK_NVAPI_DRS_NGX_DLSS_FG_OVERRIDE"] = "on"
         env_vars["DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE_RENDER_PRESET_SELECTION"] = "render_preset_latest"
         env_vars["DXVK_NVAPI_DRS_NGX_DLSS_RR_OVERRIDE_RENDER_PRESET_SELECTION"] = "render_preset_latest"
+        env_vars["DXVK_NVAPI_DRS_NGX_DLSS_FG_OVERRIDE_RENDER_PRESET_SELECTION"] = "render_preset_latest"
 
     if has_so:
         # Update DLSS libraries from GitHub
