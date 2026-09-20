@@ -55,6 +55,18 @@ It **must** be set as a startup script for each title, for example:
 proton-env-setup %command%
 ```
 
+If you are using SteamRT3 Beta to run the client, you need to set the full path in the game overrides, for example:
+
+```
+~/.local/bin/proton-env-setup %command%
+```
+
+or:
+
+```
+/usr/local/bin/proton-env-setup %command%
+```
+
 ### What It Does
 
 Runs the Steam `%command%` with `gamemoderun`. In my case, it's helpful for disabling standby and some power management features when playing with a controller or on a laptop.

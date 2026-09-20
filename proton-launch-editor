@@ -10,7 +10,7 @@ from pathlib import Path
 
 # Configuration
 STEAM_USER_ID = "XXXXXXXXX"
-LAUNCH_OPTION = "proton-env-setup %command%"
+LAUNCH_OPTION = "~/.local/bin/proton-env-setup %command%"
 
 # Paths
 STEAMAPPS_DIR = Path("~/.local/share/Steam/steamapps").expanduser()
