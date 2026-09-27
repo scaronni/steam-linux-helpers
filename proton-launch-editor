@@ -5,6 +5,7 @@ Script to set LaunchOptions for Steam games to use proton-env-setup
 
 import os
 import re
+import struct
 import sys
 from pathlib import Path
 
@@ -14,6 +15,7 @@ LAUNCH_OPTION = "~/.local/bin/proton-env-setup %command%"
 
 # Paths
 STEAMAPPS_DIR = Path("~/.local/share/Steam/steamapps").expanduser()
+APPINFO_PATH = Path("~/.local/share/Steam/appcache/appinfo.vdf").expanduser()
 LOCALCONFIG_PATH = Path(f"~/.local/share/Steam/userdata/{STEAM_USER_ID}/config/localconfig.vdf").expanduser()
 
 def parse_acf(file_path):
@@ -39,6 +41,81 @@ def should_skip(name):
     """Check if the game name should be skipped"""
     name_lower = name.lower()
     return name_lower.startswith('steam') or name_lower.startswith('proton')
+
+def read_appinfo(file_path, appids):
+    """Parse Steam's binary appinfo.vdf cache and return the data of the given appids"""
+    data = file_path.read_bytes()
+    magic, = struct.unpack_from('<I', data, 0)
+
+    def read_string(pos):
+        end = data.index(b'\0', pos)
+        return data[pos:end].decode('utf-8', 'replace'), end + 1
+
+    # Version 29 stores the keys as indexes into a string table at the end of the file
+    if magic == 0x07564429:
+        table_offset, = struct.unpack_from('<q', data, 8)
+        count, = struct.unpack_from('<I', data, table_offset)
+        strings = []
+        pos = table_offset + 4
+        for _ in range(count):
+            string, pos = read_string(pos)
+            strings.append(string)
+        pos = 16
+    elif magic == 0x07564428:
+        strings = None
+        pos = 8
+    else:
+        raise ValueError(f"unsupported appinfo.vdf version {magic:#x}")
+
+    def read_key(pos):
+        if strings is None:
+            return read_string(pos)
+        index, = struct.unpack_from('<I', data, pos)
+        return strings[index], pos + 4
+
+    def read_section(pos):
+        section = {}
+        while True:
+            value_type = data[pos]
+            pos += 1
+            if value_type in (0x08, 0x0b):
+                return section, pos
+            key, pos = read_key(pos)
+            if value_type == 0x00:
+                section[key], pos = read_section(pos)
+            elif value_type == 0x01:
+                section[key], pos = read_string(pos)
+            elif value_type in (0x02, 0x04, 0x06):
+                section[key], = struct.unpack_from('<i', data, pos)
+                pos += 4
+            elif value_type == 0x03:
+                section[key], = struct.unpack_from('<f', data, pos)
+                pos += 4
+            elif value_type == 0x07:
+                section[key], = struct.unpack_from('<Q', data, pos)
+                pos += 8
+            elif value_type == 0x0a:
+                section[key], = struct.unpack_from('<q', data, pos)
+                pos += 8
+            else:
+                raise ValueError(f"unknown value type {value_type:#x} in appinfo.vdf")
+
+    apps = {}
+    while True:
+        appid, size = struct.unpack_from('<II', data, pos)
+        if appid == 0:
+            break
+        if str(appid) in appids:
+            # The binary VDF data follows 60 bytes of per-app metadata
+            apps[str(appid)], _ = read_section(pos + 8 + 60)
+        pos += 8 + size
+
+    return apps
+
+def is_vr_only(appinfo):
+    """Check if the app can only be played in VR"""
+    common = appinfo.get('appinfo', {}).get('common', {})
+    return str(common.get('onlyvrsupport', 0)) == '1'
 
 def read_vdf_file(file_path):
     """Read the VDF file"""
@@ -147,14 +224,23 @@ def main():
         return 1
 
     # Parse all manifests and filter
+    games = [info for info in map(parse_acf, manifest_files) if info]
+
+    try:
+        appinfo = read_appinfo(APPINFO_PATH, {game['appid'] for game in games})
+    except (OSError, ValueError, struct.error) as e:
+        print(f"Warning: cannot read {APPINFO_PATH}, VR games will not be skipped: {e}", file=sys.stderr)
+        appinfo = {}
+
     games_to_update = []
 
-    for manifest_file in manifest_files:
-        game_info = parse_acf(manifest_file)
-        if game_info:
-            if should_skip(game_info['name']):
-                continue
-            games_to_update.append(game_info)
+    for game_info in games:
+        if should_skip(game_info['name']):
+            continue
+        if is_vr_only(appinfo.get(game_info['appid'], {})):
+            print(f"Skipping VR game: {game_info['name']} (ID: {game_info['appid']})")
+            continue
+        games_to_update.append(game_info)
 
     if not games_to_update:
         print("No games to update (all excluded)")
