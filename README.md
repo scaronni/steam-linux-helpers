@@ -171,3 +171,66 @@ Processing: DOOM Eternal (ID: 782330)
 Successfully updated 9 game(s)
 Backup saved to: /home/slaanesh/.local/share/Steam/userdata/XXXXXXXXX/config/localconfig.vdf.backup
 ```
+
+## Find out which preset "latest" actually selects
+
+When `DXVK_NVAPI_DRS_NGX_DLSS_SR_OVERRIDE_RENDER_PRESET_SELECTION` or `DXVK_NVAPI_DRS_NGX_DLSS_RR_OVERRIDE_RENDER_PRESET_SELECTION` are set to `render_preset_latest`, DXVK-NVAPI only passes a special value (`0x00FFFFFF`) to the DLSS library; the library itself decides which preset that means, and the answer changes between DLSS versions and quality modes. It is not documented anywhere.
+
+The `dlss-latest-presets` script reads the DLSS libraries and prints the preset that "latest" resolves to for each quality mode. It works with both Windows DLLs (`nvngx_dlss*.dll`) and native Linux shared objects (`libnvidia-ngx-dlss*.so.*`) and requires only Python and `objdump`.
+
+Pass one or more libraries to the script. For example:
+
+```
+$ ./dlss-latest-presets ~/workspace/github/DLSS/lib/Windows_x86_64/rel/nvngx_dlss.dll
+== /home/slaanesh/workspace/github/DLSS/lib/Windows_x86_64/rel/nvngx_dlss.dll (version 310.9.1.0)
+Super Resolution:
+  'latest' = per-mode default preset, resolved per quality mode at evaluation
+    Performance        M (13)
+    Balanced           K (11)
+    Quality            K (11)
+    Ultra Performance  L (12)
+    Ultra Quality      K (11)
+    DLAA               K (11)
+
+$ ./dlss-latest-presets ~/workspace/github/DLSS/lib/Windows_x86_64/rel/nvngx_dlssd.dll
+== /home/slaanesh/workspace/github/DLSS/lib/Windows_x86_64/rel/nvngx_dlssd.dll (version 310.9.1.0)
+Ray Reconstruction:
+  'latest' = fixed preset, independent of quality mode
+    Performance        F (6)
+    Balanced           F (6)
+    Quality            F (6)
+    Ultra Performance  F (6)
+    Ultra Quality      F (6)
+    DLAA               F (6)
+```
+
+ When `PROTON_ENABLE_NGX_UPDATER=1` is set, the libraries actually used by the game are the ones downloaded by the NGX updater in the Proton prefix (`pfx/drive_c/ProgramData/NVIDIA/NGX/models`), not the ones shipped with the game. For example:
+
+```
+$ dlss-latest-presets ~/.local/share/Steam/steamapps/compatdata/2012840/pfx/drive_c/ProgramData/NVIDIA/NGX/models/*/versions/*/files/*.bin
+== .../models/dlssd/versions/20317442/files/160_E658700.bin (version 310.5.2.0)
+Ray Reconstruction:
+  'latest' = fixed preset, independent of quality mode
+    Performance        D (4)
+    Balanced           D (4)
+    Quality            D (4)
+    Ultra Performance  D (4)
+    Ultra Quality      D (4)
+    DLAA               D (4)
+
+== .../models/dlssg/versions/20317442/files/160_E658700.bin (version 310.5.2.0)
+Frame Generation:
+  no render preset override setting; 'latest' does not apply
+
+== .../models/dlss/versions/20317442/files/160_E658700.bin (version 310.5.2.0)
+Super Resolution:
+  'latest' = per-mode default preset, resolved per quality mode at evaluation
+    Performance        M (13)
+    Balanced           K (11)
+    Quality            K (11)
+    Ultra Performance  L (12)
+    Ultra Quality      K (11)
+    DLAA               K (11)
+```
+
+The mapping is found by static analysis of the code handling the override value, so a future DLSS release built differently might not be understood; in that case the script prints `could not resolve` instead of guessing.
