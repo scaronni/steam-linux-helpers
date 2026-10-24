@@ -145,7 +145,9 @@ Linux
 
 The `proton-launch-editor` file is a script to be executed standa alone that will parse your `~/.local/share/Steam/userdata/<steamid>/config/localconfig.vdf` and change the `LaunchOptions` parameter of **all** the games that user has in Steam.
 
-Games that can only be played in VR are skipped, as reported by the `onlyvrsupport` flag in Steam's app info cache (`~/.local/share/Steam/appcache/appinfo.vdf`), and the launch option is removed from them if it was set by a previous run. Games that can be played both in VR and on a monitor are still updated.
+Tools like Proton, the Steam Linux Runtimes and SteamVR are skipped, as reported by the app type in Steam's app info cache (`~/.local/share/Steam/appcache/appinfo.vdf`).
+
+Games that can only be played in VR are skipped, as reported by the `onlyvrsupport` flag in the same cache, and the launch option is removed from them if it was set by a previous run. Games that can be played both in VR and on a monitor are still updated.
 
 Put the script in your `$PATH` (`.local/bin`, `/usr/local/bin`, etc.) so your shell can find it and adjust the following variables at the top of the script with your preferred launch options and, optionally, your Steam User ID:
 
@@ -177,10 +179,9 @@ Processing: Horizon Forbidden West™ Complete Edition (ID: 2420110)
 Processing: Half-Life 2 RTX (ID: 2477290)
 Processing: Horizon Zero Dawn™ Remastered (ID: 2561580)
 Processing: DOOM (ID: 379720)
-Processing: Legacy Steam Runtime (ID: 4690330)
 Processing: DOOM Eternal (ID: 782330)
 
-Successfully updated 12 game(s)
+Successfully updated 11 game(s)
 Backup saved to: /home/slaanesh/.local/share/Steam/userdata/XXXXXXXXX/config/localconfig.vdf.backup
 ```
 

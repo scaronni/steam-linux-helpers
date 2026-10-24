@@ -71,7 +71,7 @@ def parse_acf(file_path):
 def should_skip(name):
     """Check if the game name should be skipped"""
     name_lower = name.lower()
-    return name_lower.startswith('steam') or name_lower.startswith('proton')
+    return name_lower.startswith('steam') or name_lower.startswith('proton') or 'runtime' in name_lower
 
 def read_appinfo(file_path, appids):
     """Parse Steam's binary appinfo.vdf cache and return the data of the given appids"""
@@ -147,6 +147,11 @@ def is_vr_only(appinfo):
     """Check if the app can only be played in VR"""
     common = appinfo.get('appinfo', {}).get('common', {})
     return str(common.get('onlyvrsupport', 0)) == '1'
+
+def is_tool(appinfo):
+    """Check if the app is a tool (Proton, Steam Linux Runtime, SteamVR, etc.)"""
+    common = appinfo.get('appinfo', {}).get('common', {})
+    return str(common.get('type', '')).lower() == 'tool'
 
 def read_vdf_file(file_path):
     """Read the VDF file"""
@@ -281,14 +286,14 @@ def main():
     try:
         appinfo = read_appinfo(APPINFO_PATH, {game['appid'] for game in games})
     except (OSError, ValueError, struct.error) as e:
-        print(f"Warning: cannot read {APPINFO_PATH}, VR games will not be skipped: {e}", file=sys.stderr)
+        print(f"Warning: cannot read {APPINFO_PATH}, VR games and tools will not be skipped: {e}", file=sys.stderr)
         appinfo = {}
 
     games_to_update = []
     vr_games = []
 
     for game_info in games:
-        if should_skip(game_info['name']):
+        if should_skip(game_info['name']) or is_tool(appinfo.get(game_info['appid'], {})):
             continue
         if is_vr_only(appinfo.get(game_info['appid'], {})):
             vr_games.append(game_info)
