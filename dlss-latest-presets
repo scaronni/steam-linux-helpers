@@ -5,9 +5,9 @@ Works on nvngx_dlss*.dll (PE) and libnvidia-ngx-dlss*.so (ELF), x86-64 only.
 Static analysis via objdump; the mapping is not exported anywhere, so this
 follows the code that handles the DRS render preset override value:
 
-  1. Find where the SR/RR "render preset selection" DRS setting is read and the
-     branch taken when it equals 0x00FFFFFF, then interpret that branch once
-     per quality mode to see which preset gets stored.
+  1. Find where the SR/RR/FG "render preset selection" DRS setting is loaded,
+     then interpret the code from there with the value set to 0x00FFFFFF, once
+     per quality mode, to see which preset gets stored.
   2. Newer libraries re-check 0x00FFFFFF in the per-mode preset helper and
      substitute that mode's built-in default preset; when that helper is found,
      the per-mode defaults passed to it are what is actually used.
@@ -19,7 +19,8 @@ import sys
 
 DRS_SR_PRESET = 0x10E41DF3  # NGX_DLSS_SR_OVERRIDE_RENDER_PRESET_SELECTION
 DRS_RR_PRESET = 0x10E41DF7  # NGX_DLSS_RR_OVERRIDE_RENDER_PRESET_SELECTION
-DRS_FG_MFG_COUNT = 0x10E41DF6  # NGX_DLSSG_MULTI_FRAME_COUNT
+DRS_FG_PRESET = 0x10E41DF1  # NGX_DLSS_FG_OVERRIDE_RENDER_PRESET_SELECTION
+DRS_FG_MFG_COUNT = 0x104D6667  # NGX_DLSSG_MULTI_FRAME_COUNT
 LATEST = 0x00FFFFFF
 
 # NVSDK_NGX_PerfQuality_Value order, with the hint parameter suffix for each.
@@ -35,6 +36,10 @@ MAX_PRESET = 26
 
 INSN_RE = re.compile(r"^\s*([0-9a-f]+):\s+(\S+)\s*(.*)$")
 REF_RE = re.compile(r"#\s*(?:0x)?([0-9a-f]+)")
+CALLER_SAVED = {
+    "pe": {"rax", "rcx", "rdx", "r8", "r9", "r10", "r11"},
+    "elf": {"rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11"},
+}
 REG_ALIASES = {
     "a": "rax", "b": "rbx", "c": "rcx", "d": "rdx",
     "si": "rsi", "di": "rdi", "bp": "rbp", "sp": "rsp",
@@ -77,6 +82,7 @@ class Binary:
     def __init__(self, path):
         self.path = path
         self.data = open(path, "rb").read()
+        self.abi = "pe" if self.data[:2] == b"MZ" else "elf"
         self.sections = self._sections()
         self.insns = []
         self.index = {}
@@ -130,6 +136,11 @@ class Binary:
         m = re.search(r"\.so\.([\d.]+)$", self.path)
         return m.group(1) if m else "unknown"
 
+    def preset_notes(self):
+        """{preset: text} from FG log lines like "Preset B selected, enabling UIR"."""
+        return {ord(m.group(1)) - ord("A") + 1: m.group(2).decode()
+                for m in re.finditer(rb"Preset ([A-Z]) selected, ([^\0.]+)", self.data)}
+
     def refs_to_imm(self, value):
         pat = re.compile(rf",0x{value:x}$")
         return [i for i, (_, _, ops, _) in enumerate(self.insns) if pat.search(ops)]
@@ -150,92 +161,106 @@ def cond_taken(mnem, flags):
     }.get(mnem)
 
 
-def run_latest_branch(binary, start, mode):
-    """Interpret from the `cmp x,0xffffff` at `start` as if x == LATEST.
+def run_latest_path(binary, start, mode):
+    """Interpret from the DRS value load at `start` as if it read LATEST.
 
-    The first DWORD loaded from memory on that path is taken to be the quality
-    mode. Returns the first preset-sized immediate stored to memory, or None if
-    the path leaves what this interpreter understands.
+    Register values are tagged with where they came from: "latest" (the DRS
+    value), "mode" (the first other DWORD loaded from memory, taken to be the
+    quality mode) or "imm". Returns the first preset-sized constant stored to
+    memory after the DRS value has been tested, or None if the path leaves what
+    this interpreter understands.
     """
-    regs, flags, mode_loc = {}, (LATEST, LATEST), None
+    regs, flags, mode_loc, tested = {}, None, None, False
+    _, _, ops, _ = binary.insns[start]
+    regs[canon_reg(ops.split(",", 1)[0])] = (LATEST, "latest")
     i = start + 1
 
     def value(op):
         nonlocal mode_loc
         v = imm(op)
         if v is not None:
-            return v
+            return v, "imm"
         if is_mem(op):
+            if not op.startswith("DWORD"):
+                return None, None
             if mode_loc is None:
                 mode_loc = op
-            return mode if op == mode_loc else None
-        return regs.get(canon_reg(op))
+            return (mode, "mode") if op == mode_loc else (None, None)
+        return regs.get(canon_reg(op), (None, None))
 
-    for _ in range(200):
-        if i >= len(binary.insns):
+    def jump(op):
+        t = target(op)
+        return binary.index.get(t) if t is not None else None
+
+    for _ in range(300):
+        if i is None or i >= len(binary.insns):
             return None
         _, mnem, ops, _ = binary.insns[i]
-        args = ops.split(",", 1)
-        dst, src = (args + [""])[:2]
+        dst, _, src = ops.partition(",")
+        reg = canon_reg(dst)
         if mnem == "jmp":
-            t = target(dst)
-            if t is None or t not in binary.index:
-                return None
-            i = binary.index[t]
+            i = jump(dst)
             continue
         if mnem.startswith("j"):
-            if flags is None:
-                return None
-            taken = cond_taken(mnem, flags)
+            taken = cond_taken(mnem, flags) if flags else None
             if taken is None:
                 return None
             if taken:
-                t = target(dst)
-                if t is None or t not in binary.index:
-                    return None
-                i = binary.index[t]
+                i = jump(dst)
                 continue
         elif mnem in ("mov", "movsxd", "movzx"):
             if is_mem(dst):
-                v = imm(src)
-                if v is not None and 1 <= v <= MAX_PRESET and dst.startswith("DWORD"):
+                v, kind = value(src)
+                if (tested and kind == "imm" and v is not None
+                        and 1 <= v <= MAX_PRESET and dst.startswith("DWORD")):
                     return v
-            elif canon_reg(dst):
-                regs[canon_reg(dst)] = value(src)
+            elif reg:
+                regs[reg] = value(src)
         elif mnem in ("cmp", "test", "sub", "add"):
-            a, b = value(dst), value(src)
+            (a, ka), (b, kb) = value(dst), value(src)
             if a is None or b is None:
                 return None
+            tested |= "latest" in (ka, kb)
+            kind = ka if ka != "imm" else kb
             if mnem == "test":
                 flags = (a & b, 0)
             elif mnem == "add":
                 flags = ((a + b) & 0xFFFFFFFF, 0)
-                regs[canon_reg(dst)] = flags[0]
+                regs[reg] = (flags[0], kind)
             else:
                 flags = (a, b)
                 if mnem == "sub":
-                    regs[canon_reg(dst)] = (a - b) & 0xFFFFFFFF
-        elif mnem in ("and", "or", "xor", "inc", "dec", "neg", "shl", "shr", "sar"):
-            if canon_reg(dst):
-                regs[canon_reg(dst)] = None
+                    regs[reg] = ((a - b) & 0xFFFFFFFF, kind)
+        elif mnem == "xor" and reg and canon_reg(src) == reg:
+            regs[reg], flags = (0, "imm"), (0, 0)
+        elif mnem == "call":
+            for r in CALLER_SAVED[binary.abi]:
+                regs.pop(r, None)
             flags = None
-        elif mnem == "lea":
-            regs[canon_reg(dst)] = None
-        elif mnem in ("call", "ret", "int3", "ud2", "(bad)") or mnem.startswith("cmov"):
+        elif mnem in ("ret", "int3", "ud2", "(bad)", "hlt"):
             return None
+        elif mnem not in ("nop", "xchg", "push"):
+            # lea, cmov*, set*, pop and anything unexpected: result unknown;
+            # anything but lea/cmov/set may also change the flags.
+            if reg:
+                regs[reg] = (None, None)
+            if not (mnem == "lea" or mnem.startswith(("cmov", "set"))):
+                flags = None
         i += 1
     return None
 
 
-def drs_latest_sites(binary, drs_id):
-    sites = set()
+def resolve_latest(binary, drs_id, modes):
+    """Per-mode LATEST result from the first DRS value load that resolves."""
+    load = re.compile(r"(\w+),DWORD PTR \[")
     for i in binary.refs_to_imm(drs_id):
-        for j in range(i + 1, min(i + 80, len(binary.insns))):
+        for j in range(i + 1, min(i + 60, len(binary.insns))):
             _, mnem, ops, _ = binary.insns[j]
-            if mnem == "cmp" and ops.endswith(f",0x{LATEST:x}"):
-                sites.add(j)
-                break
-    return sorted(sites)
+            if mnem in ("mov", "movsxd") and load.match(ops) and canon_reg(ops.split(",")[0]):
+                res = [run_latest_path(binary, j, m) for m in range(modes)]
+                if None not in res:
+                    return res
+    return None
 
 
 def per_mode_defaults(binary, prefix):
@@ -280,19 +305,19 @@ def callee_checks_latest(binary, addr):
 
 def analyze(binary, name, drs_id, prefix):
     print(f"{name}:")
-    sites = drs_latest_sites(binary, drs_id)
-    if not sites:
-        print("  'latest' (0x00FFFFFF) not handled; treated as an invalid preset value\n")
-        return
-
+    modes = len(MODES) if prefix else 1
+    init = resolve_latest(binary, drs_id, modes)
     helpers = {c: d for c, d in per_mode_defaults(binary, prefix).items()
-               if len(d) == len(MODES)}
+               if len(d) == len(MODES)} if prefix else {}
     eval_helpers = [c for c in helpers if callee_checks_latest(binary, c)]
 
-    init = [run_latest_branch(binary, sites[0], m) for m in range(len(MODES))]
     if eval_helpers:
         final = [helpers[eval_helpers[0]][m] for m in range(len(MODES))]
         how = "per-mode default preset, resolved per quality mode at evaluation"
+    elif init is None:
+        print("  could not find how 'latest' (0x00FFFFFF) is handled; this version")
+        print("  may not support it, or the code layout is not understood\n")
+        return
     else:
         final = init
         if len(set(init)) == 1:
@@ -301,11 +326,11 @@ def analyze(binary, name, drs_id, prefix):
             how = ("resolved once at feature creation from the DRS quality mode "
                    "override (Performance if unset), not the game's mode")
 
-    if None in final:
-        print("  could not resolve; the code layout is not understood")
-        print(f"  DRS check at 0x{binary.insns[sites[0]][0]:x}\n")
+    notes = binary.preset_notes()
+    if not prefix:
+        note = f" ({notes[final[0]]})" if final[0] in notes else ""
+        print(f"  'latest' = {preset_name(final[0])}{note}\n")
         return
-
     print(f"  'latest' = {how}")
     width = max(len(m) for m, _ in MODES)
     for m, (mode, _) in enumerate(MODES):
@@ -313,18 +338,34 @@ def analyze(binary, name, drs_id, prefix):
     print()
 
 
+def is_x86_64(path):
+    with open(path, "rb") as f:
+        head = f.read(4096)
+    if head[:4] == b"\x7fELF":
+        return head[18:20] == b"\x3e\x00"
+    if head[:2] == b"MZ":
+        pe = int.from_bytes(head[0x3C:0x40], "little")
+        return head[pe:pe + 6] == b"PE\0\0\x64\x86"
+    return False
+
+
 def main():
     if len(sys.argv) < 2:
         sys.exit(f"usage: {sys.argv[0]} <nvngx_dlss*.dll | libnvidia-ngx-dlss*.so> ...")
     for path in sys.argv[1:]:
+        if not is_x86_64(path):
+            print(f"== {path}\n  skipped: not an x86-64 ELF or PE library\n")
+            continue
         binary = Binary(path)
         print(f"== {path} (version {binary.version()})")
         if binary.refs_to_imm(DRS_RR_PRESET):
             analyze(binary, "Ray Reconstruction", DRS_RR_PRESET, "RayReconstruction")
         elif binary.refs_to_imm(DRS_SR_PRESET):
             analyze(binary, "Super Resolution", DRS_SR_PRESET, "DLSS")
+        elif binary.refs_to_imm(DRS_FG_PRESET):
+            analyze(binary, "Frame Generation", DRS_FG_PRESET, None)
         elif binary.refs_to_imm(DRS_FG_MFG_COUNT):
-            print("Frame Generation:\n  no render preset override setting; 'latest' does not apply\n")
+            print("Frame Generation:\n  no render preset override setting in this version\n")
         else:
             print("  no DLSS render preset override setting found\n")
 
