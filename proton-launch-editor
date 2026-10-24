@@ -215,6 +215,27 @@ def update_launch_options(vdf_content, appid, launch_option):
 
     return vdf_content
 
+def remove_launch_options(vdf_content, appid):
+    """
+    Remove LaunchOptions for a specific appid if it uses proton-env-setup
+    """
+    match = re.search(rf'(\t+)"{appid}"\s*\n\s*{{', vdf_content)
+    if not match:
+        return vdf_content, False
+
+    start_pos = match.start()
+    end_pos = find_app_section_bounds(vdf_content, match.end())
+    if end_pos == -1:
+        print(f"Warning: Could not find end of app section for appid {appid}", file=sys.stderr)
+        return vdf_content, False
+
+    app_section = vdf_content[start_pos:end_pos + 1]
+    # Older versions of this script used a different path for proton-env-setup
+    new_app_section, count = re.subn(
+        r'[ \t]*"LaunchOptions"[ \t]+"[^"]*proton-env-setup[^"]*"[ \t]*\n', '', app_section)
+
+    return vdf_content[:start_pos] + new_app_section + vdf_content[end_pos + 1:], count > 0
+
 def main():
     # Get all appmanifest files
     manifest_files = sorted(STEAMAPPS_DIR.glob("appmanifest_*.acf"))
@@ -233,16 +254,17 @@ def main():
         appinfo = {}
 
     games_to_update = []
+    vr_games = []
 
     for game_info in games:
         if should_skip(game_info['name']):
             continue
         if is_vr_only(appinfo.get(game_info['appid'], {})):
-            print(f"Skipping VR game: {game_info['name']} (ID: {game_info['appid']})")
+            vr_games.append(game_info)
             continue
         games_to_update.append(game_info)
 
-    if not games_to_update:
+    if not games_to_update and not vr_games:
         print("No games to update (all excluded)")
         return 0
 
@@ -252,6 +274,13 @@ def main():
         return 1
 
     vdf_content = read_vdf_file(LOCALCONFIG_PATH)
+
+    for game in vr_games:
+        vdf_content, removed = remove_launch_options(vdf_content, game['appid'])
+        if removed:
+            print(f"Removing launch option from VR game: {game['name']} (ID: {game['appid']})")
+        else:
+            print(f"Skipping VR game: {game['name']} (ID: {game['appid']})")
 
     # Update each game
     for game in games_to_update:

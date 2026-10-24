@@ -145,7 +145,7 @@ Linux
 
 The `proton-launch-editor` file is a script to be executed standa alone that will parse your `~/.local/share/Steam/userdata/<steamid>/config/localconfig.vdf` and change the `LaunchOptions` parameter of **all** the games that user has in Steam.
 
-Games that can only be played in VR are skipped, as reported by the `onlyvrsupport` flag in Steam's app info cache (`~/.local/share/Steam/appcache/appinfo.vdf`). Games that can be played both in VR and on a monitor are still updated.
+Games that can only be played in VR are skipped, as reported by the `onlyvrsupport` flag in Steam's app info cache (`~/.local/share/Steam/appcache/appinfo.vdf`), and the launch option is removed from them if it was set by a previous run. Games that can be played both in VR and on a monitor are still updated.
 
 Put the script in your `$PATH` (`.local/bin`, `/usr/local/bin`, etc.) so your shell can find it and adjust the following variables at the top of the script pointing to your Steam User ID and your preferred launch options:
 
