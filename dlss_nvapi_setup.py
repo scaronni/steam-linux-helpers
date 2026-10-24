@@ -8,7 +8,7 @@ Usage in user_settings.py:
 """
 
 import os
-import glob
+import fnmatch
 
 
 def get_game_dir():
@@ -29,8 +29,11 @@ def find_files_matching(directory, pattern):
     if not directory or not os.path.isdir(directory):
         return []
 
-    search_path = os.path.join(directory, "**", pattern)
-    return glob.glob(search_path, recursive=True)
+    # os.walk does not follow symlinks; the prefix has dosdevices/z: -> /
+    matches = []
+    for root, _, files in os.walk(directory):
+        matches.extend(os.path.join(root, f) for f in fnmatch.filter(files, pattern))
+    return matches
 
 
 def has_nvngx_dlss_dll():
