@@ -147,28 +147,40 @@ The `proton-launch-editor` file is a script to be executed standa alone that wil
 
 Games that can only be played in VR are skipped, as reported by the `onlyvrsupport` flag in Steam's app info cache (`~/.local/share/Steam/appcache/appinfo.vdf`), and the launch option is removed from them if it was set by a previous run. Games that can be played both in VR and on a monitor are still updated.
 
-Put the script in your `$PATH` (`.local/bin`, `/usr/local/bin`, etc.) so your shell can find it and adjust the following variables at the top of the script pointing to your Steam User ID and your preferred launch options:
+Put the script in your `$PATH` (`.local/bin`, `/usr/local/bin`, etc.) so your shell can find it and adjust the following variables at the top of the script with your preferred launch options and, optionally, your Steam User ID:
 
 ```
-STEAM_USER_ID = "XXXXXXXXX"
+STEAM_USER_ID = None
 LAUNCH_OPTION = "proton-env-setup %command%"
 ```
+
+When `STEAM_USER_ID` is `None`, the Steam User ID is detected from the most recently logged in user in `~/.local/share/Steam/config/loginusers.vdf`.
 
 I use it in combination with the above script. Sample output:
 
 ```
 $ proton-launch-editor
-Processing: Baldur's Gate 3 (ID: 1086940)
+Skipping VR game: The Curious Tale of the Stolen Pets (ID: 1099500)
+Skipping VR game: Down The Rabbit Hole (ID: 1215270)
+Skipping VR game: Moss II VR (ID: 2059670)
+Skipping VR game: The Lab (ID: 450390)
+Skipping VR game: Half-Life: Alyx (ID: 546560)
+Skipping VR game: A Fisherman's Tale (ID: 559330)
+Skipping VR game: Aperture Hand Lab (ID: 868020)
 Processing: Cyberpunk 2077 (ID: 1091500)
 Processing: Mass Effect™ Legendary Edition (ID: 1328670)
 Processing: DEATH STRANDING DIRECTOR'S CUT (ID: 1850570)
+Processing: Portal with RTX (ID: 2012840)
+Processing: Anomaly 2 (ID: 236730)
+Processing: Portal: Prelude RTX (ID: 2410180)
 Processing: Horizon Forbidden West™ Complete Edition (ID: 2420110)
-Processing: The Talos Principle (ID: 257510)
+Processing: Half-Life 2 RTX (ID: 2477290)
+Processing: Horizon Zero Dawn™ Remastered (ID: 2561580)
 Processing: DOOM (ID: 379720)
-Processing: Syberia (ID: 46500)
+Processing: Legacy Steam Runtime (ID: 4690330)
 Processing: DOOM Eternal (ID: 782330)
 
-Successfully updated 9 game(s)
+Successfully updated 12 game(s)
 Backup saved to: /home/slaanesh/.local/share/Steam/userdata/XXXXXXXXX/config/localconfig.vdf.backup
 ```
 

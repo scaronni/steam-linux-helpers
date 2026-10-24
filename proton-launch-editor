@@ -10,13 +10,44 @@ import sys
 from pathlib import Path
 
 # Configuration
-STEAM_USER_ID = "XXXXXXXXX"
+STEAM_USER_ID = None  # Detected from the most recently logged in user when None
 LAUNCH_OPTION = "~/.local/bin/proton-env-setup %command%"
 
 # Paths
-STEAMAPPS_DIR = Path("~/.local/share/Steam/steamapps").expanduser()
-APPINFO_PATH = Path("~/.local/share/Steam/appcache/appinfo.vdf").expanduser()
-LOCALCONFIG_PATH = Path(f"~/.local/share/Steam/userdata/{STEAM_USER_ID}/config/localconfig.vdf").expanduser()
+STEAM_DIR = Path("~/.local/share/Steam").expanduser()
+STEAMAPPS_DIR = STEAM_DIR / "steamapps"
+APPINFO_PATH = STEAM_DIR / "appcache" / "appinfo.vdf"
+LOGINUSERS_PATH = STEAM_DIR / "config" / "loginusers.vdf"
+
+# The userdata folder is named after the account ID, the low 32 bits of the SteamID64
+STEAMID64_BASE = 76561197960265728
+
+def localconfig_path(user_id):
+    """Path of the localconfig.vdf file of a Steam user"""
+    return STEAM_DIR / "userdata" / str(user_id) / "config" / "localconfig.vdf"
+
+def detect_steam_user_id():
+    """Find the Steam user ID of the most recently logged in user"""
+    try:
+        content = LOGINUSERS_PATH.read_text(encoding='utf-8')
+    except OSError:
+        content = ''
+
+    users = []
+    for match in re.finditer(r'"(\d{17})"\s*\{([^}]*)\}', content):
+        fields = dict(re.findall(r'"(\w+)"\s+"([^"]*)"', match.group(2)))
+        timestamp = fields.get('timestamp', '0')
+        users.append((fields.get('MostRecent') == '1',
+                      int(timestamp) if timestamp.isdigit() else 0,
+                      int(match.group(1)) - STEAMID64_BASE))
+
+    for _, _, user_id in sorted(users, reverse=True):
+        if localconfig_path(user_id).exists():
+            return str(user_id)
+
+    # Fall back to the only user with a local configuration
+    found = [p.parents[1].name for p in (STEAM_DIR / "userdata").glob("*/config/localconfig.vdf")]
+    return found[0] if len(found) == 1 else None
 
 def parse_acf(file_path):
     """Parse an ACF file and extract appid and name"""
@@ -268,12 +299,18 @@ def main():
         print("No games to update (all excluded)")
         return 0
 
-    # Read the localconfig.vdf file
-    if not LOCALCONFIG_PATH.exists():
-        print(f"Error: {LOCALCONFIG_PATH} not found!", file=sys.stderr)
+    user_id = STEAM_USER_ID or detect_steam_user_id()
+    if not user_id:
+        print("Error: cannot detect the Steam user ID, set STEAM_USER_ID at the top of the script", file=sys.stderr)
         return 1
 
-    vdf_content = read_vdf_file(LOCALCONFIG_PATH)
+    # Read the localconfig.vdf file
+    localconfig = localconfig_path(user_id)
+    if not localconfig.exists():
+        print(f"Error: {localconfig} not found!", file=sys.stderr)
+        return 1
+
+    vdf_content = read_vdf_file(localconfig)
 
     for game in vr_games:
         vdf_content, removed = remove_launch_options(vdf_content, game['appid'])
@@ -288,10 +325,10 @@ def main():
         vdf_content = update_launch_options(vdf_content, game['appid'], LAUNCH_OPTION)
 
     # Write back the modified content
-    write_vdf_file(LOCALCONFIG_PATH, vdf_content)
+    write_vdf_file(localconfig, vdf_content)
 
     print(f"\nSuccessfully updated {len(games_to_update)} game(s)")
-    print(f"Backup saved to: {LOCALCONFIG_PATH}.backup")
+    print(f"Backup saved to: {localconfig}.backup")
 
     return 0
 
